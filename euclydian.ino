@@ -15,8 +15,10 @@
 #define SCREEN_HEIGHT 64
 
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
-
+int b=0;
+unsigned long counter=0;
 int oldTrigTime = 0;
+bool oldTrigExt = 0;
 // Pins
 int pin_clk_4 = A1;
 int pin_clk_6 = A2;
@@ -73,6 +75,7 @@ unsigned long select_time = 0;
 // Display
 byte select_menu = 0;
 int select_ch = 0;
+int bpm = 0;
 bool disp_refresh = 1;
 // Drawing the circles
 const int r_circle = 18;
@@ -90,6 +93,11 @@ byte buf_count = 0;
 bool offset_buf[3][16];
 byte line_xbuf[17];//Buffer for drawing lines
 byte line_ybuf[17];//Buffer for drawing lines
+
+// User BPM
+const float min_bpm = 60;
+const float max_bpm = 150;
+float steps_bpm = (max_bpm - min_bpm) / 1024;
 
 int mode = 0;
 Bounce debouncer = Bounce();  // Create a Bounce object
@@ -110,7 +118,7 @@ void setup() {
   Serial.begin(9600);
 
   get_coordinates(r_circle);
-  OLED_display(0,0, mode);
+  OLED_display(0,0, mode, 120);
 
   pinMode(pin_clk_4, OUTPUT);
   pinMode(pin_clk_6, OUTPUT);
@@ -123,11 +131,21 @@ void setup() {
   pinMode(6, OUTPUT); 
   pinMode(7, OUTPUT); 
   pinMode(8, OUTPUT); 
+  pinMode(12, INPUT_PULLUP); 
+  // pinMode(A0, INPUT_PULLUP); 
   debouncer.attach(4);
   debouncer.interval(5); 
 }
 
 void loop() {
+  // int clockValue = digitalRead(12);
+  // if (clockValue == LOW) {
+  //   Serial.println("Cable plugged in");
+  // }
+  // else {
+  //   Serial.println("Cable plugged out");   
+  // }
+
   debouncer.update(); 
   if (debouncer.rose()){
     mode = 1 - mode;
@@ -221,17 +239,27 @@ void loop() {
   }
 
   //-----------------trigger detect & output----------------------
-  clock_pulse = userBPM();
-  trigIn = (clock_pulse % 24 == 0 ? 1 : 0);
+  // clock_pulse = userBPM();
+  // trigIn = (clock_pulse % 24 == 0 ? 1 : 0);
+  // int bpm = BPM(120);
+  int trigExt = digitalRead(12); //external trigger in
+  if (trigExt == 1) {
+    counter++;
+  } else {
+    counter = 0;
+  }
+  
+  if (counter > 10) {
+    // For testing fix the clockrate
+    int clock_rate = 900; // analogRead(A0);
+    bpm = round(min_bpm + (clock_rate * steps_bpm));
+    trigIn = BPM(bpm); // (clock_pulse % 24 == 0 ? 1 : 0);
+  } else {
+    trigIn = trigExt;
+    bpm = 0;
+  }
 
-  // if (clock_pulse % 24 == 0) {
-  //   int trigTime = millis();
-  //   Serial.print(trigTime - oldTrigTime);
-  //   Serial.println();
-  //   int oldTrigTime = trigTime;
-  // }
-
-  // trigIn = digitalRead(13);//external trigger in
+  
   if (oldTrigIn == 0 && trigIn == 1) {
     gate_timer = millis();
     for (int i = 0; i <= 2; i++) {
@@ -257,8 +285,11 @@ void loop() {
   
   // disp_refresh = 1;
   if (disp_refresh == 1) { // For debugging
-    OLED_display(select_ch, select_menu, mode);
+    OLED_display(select_ch, select_menu, mode, bpm);
     disp_refresh = 0;
+  }
+  else {
+    delay(3); // Don't know why this is needed but otherwise it hangs (after implementing the input clk switch thing)
   }
 
 }
@@ -287,6 +318,17 @@ int up_down(int oldOptEnc, int newOptEnc) {
   return optChange;
 }
 
+int BPM(int bpm) {
+  float beatInterval = 60000 / (bpm);
+  unsigned long currentMillis = millis();
+  if ((currentMillis - previousMillis) >= beatInterval) {
+    previousMillis = currentMillis;
+    return 1;
+  } else {
+    return 0;
+  }
+}
+
 int userBPM() {
   // int clock_rate = analogRead(pin_bpm_input);
   // int bpm = round(min_bpm + (clock_rate * steps_bpm));
@@ -310,8 +352,9 @@ void writePulse(int clock_pulse) {
   }
 }
 
-void OLED_display(int select_ch, int select_menu, int mode) {
+void OLED_display(int select_ch, int select_menu, int mode, int bpm) {
   display.clearDisplay();
+  display.setTextColor(WHITE);
   display.setCursor(2, 54);
   display.print(select_ch + 1);
   display.setCursor(12, 54);
@@ -320,29 +363,39 @@ void OLED_display(int select_ch, int select_menu, int mode) {
   display.print("OFF");
   display.setCursor(65, 54);
   display.print("LIM");
-  display.setCursor(90, 54);
-  display.print("MUTE");
-  display.setCursor(120, 54);
+  display.setCursor(89, 54);
+  display.print("M");
+  display.setCursor(100, 54);
   display.print("R");
+  display.setCursor(110, 54);
+  display.fillRect(109, 51, 19, 13, WHITE);
+  display.setTextColor(BLACK);
+  if (bpm != 0) {
+    display.print(bpm);
+  } else {
+    display.print("EXT");
+  }
+  
+  
 
   //draw select box
   if ( select_menu == 0) {
-    display.drawRect(0, 52, 9, 12, WHITE);
+    display.drawRect(0, 51, 9, 13, WHITE);
   }
   else if ( select_menu == 1) {
-    display.drawRect(9, 52, 28, 12, WHITE);
+    display.drawRect(9, 51, 28, 13, WHITE);
   }
   else if ( select_menu == 2) {
-    display.drawRect(37, 52, 24, 12, WHITE);
+    display.drawRect(37, 51, 24, 13, WHITE);
   }
   else if ( select_menu == 3) {
-    display.drawRect(61, 52, 25, 12, WHITE);
+    display.drawRect(61, 51, 25, 13, WHITE);
   }
   else if ( select_menu == 4) {
-    display.drawRect(86, 52, 30, 12, WHITE);
+    display.drawRect(86, 51, 11, 13, WHITE);
   }
   else if ( select_menu == 5) {
-    display.drawRect(118, 52, 9, 12, WHITE);
+    display.drawRect(97, 51, 11, 13, WHITE);
   }
   // draw select circle
   if (mode == 1) {
