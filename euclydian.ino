@@ -13,7 +13,8 @@ unsigned long pulseTime = 0;
 unsigned long clkPrev = 0;
 unsigned long clkNow = 0;
 int bpmDisp = 0;
-int divPulse = 0;
+byte divPulses[3] = { 1, 1, 1 };
+
 //Oled setting
 #include<Wire.h>
 #include<Math.h>
@@ -226,7 +227,17 @@ void loop() {
           }
           break;
 
-        case 6: //bpm
+        case 6: //multiplier
+          multiplier[select_ch] += optChange ;
+          if (multiplier[select_ch] > 4) {
+            multiplier[select_ch] = 1;
+          }
+          else if (multiplier[select_ch] < 1) {
+            multiplier[select_ch] = 4;
+          }
+          break;
+
+        case 7: //bpm
           bpm += optChange;
           break;
       }
@@ -278,26 +289,25 @@ void loop() {
     for (int i = 0; i <= 2; i++) {
       advance_step(i);
     }
-    divPulse = 1;
+    // divPulse = 1;
+    divPulses[0] = 1;
+    divPulses[1] = 1;
+    divPulses[2] = 1;
     disp_refresh = 1;
   }
 
   // CLOCK DIVIDER
-  clock_divider(3,0);
-  // int clkInt = pulseTime/3;
-  // if ((millis() - currentPulse >= clkInt*divPulse && divPulse < 3)) {
-  //   lightPulse = millis();
-  //   advance_step(0);
-  //   disp_refresh = 1;
-  //   divPulse++;
-  // }
+  for (int i = 0; i <= 2; i++) { 
+    if (multiplier[i] != 1) {
+      clock_divider(multiplier[i],i);
+    }
+  }
 
   if (lightPulse + 10 <= millis()) { //off all gate , gate time is 10msec
     digitalWrite(6, LOW);
     digitalWrite(7, LOW);
     digitalWrite(8, LOW);
   }
-
 
   oldTrigIn = trigIn;
 
@@ -309,11 +319,6 @@ void loop() {
     delay(3); // Don't know why this is needed but otherwise it hangs (after implementing the input clk switch thing)
   }
 }
-
-// void record_pulse() {
-//   pulseTimes[bufferIndex] = millis();
-//   bufferIndex = (bufferIndex + 1) % 10;  // Circular buffer index update
-// }
 
 void advance_step(int i) {
   playing_step[i]++;      //When the trigger in, increment the step by 1.
@@ -327,11 +332,11 @@ void advance_step(int i) {
 
 void clock_divider(int divider, int channel) {
   int clkInt = pulseTime/divider;
-  if ((millis() - currentPulse >= clkInt*divPulse && divPulse < divider)) {
+  if ((millis() - currentPulse >= clkInt*divPulses[divider-2] && divPulses[divider-2] < divider)) {
     lightPulse = millis();
     advance_step(channel);
     disp_refresh = 1;
-    divPulse++;
+    divPulses[divider-2]++;
   }
 }
 
@@ -349,9 +354,9 @@ float calculateAvg(unsigned long oldPulse, unsigned long currentPulse, int pulse
 int get_menu(int change, int select_menu) {
   select_menu = select_menu + change;
   if (select_menu < 0) {
-    select_menu = 6;
+    select_menu = 7;
   }
-  else if (select_menu > 6 ) {
+  else if (select_menu > 7 ) {
     select_menu = 0;
   }
   return select_menu;
@@ -413,12 +418,14 @@ void OLED_display(int select_ch, int select_menu, int mode, int bpm) {
   display.print("HITS");
   display.setCursor(40, 54);
   display.print("OFF");
-  display.setCursor(65, 54);
-  display.print("LIM");
-  display.setCursor(89, 54);
+  display.setCursor(62, 54);
+  display.print("LI");
+  display.setCursor(79, 54);
   display.print("M");
-  display.setCursor(100, 54);
+  display.setCursor(90, 54);
   display.print("R");
+  display.setCursor(100, 54);
+  display.print("X");
   display.setCursor(110, 54);
   display.fillRect(109, 51, 19, 13, WHITE);
   display.setTextColor(BLACK);
@@ -438,18 +445,27 @@ void OLED_display(int select_ch, int select_menu, int mode, int bpm) {
   else if ( select_menu == 2) {
     display.drawRect(37, 51, 24, 13, WHITE);
   }
-  else if ( select_menu == 3) {
-    display.drawRect(61, 51, 25, 13, WHITE);
+  else if ( select_menu == 3) { // LI 
+    display.drawRect(59, 51, 17, 13, WHITE);
   }
-  else if ( select_menu == 4) {
-    display.drawRect(86, 51, 11, 13, WHITE);
+  else if ( select_menu == 4) { // M
+    display.drawRect(75, 51, 11, 13, WHITE);
   }
-  else if ( select_menu == 5) {
+  else if ( select_menu == 5) { // R
+    display.drawRect(87, 51, 11, 13, WHITE);
+  }
+  else if ( select_menu == 6) { // X
     display.drawRect(97, 51, 11, 13, WHITE);
   }
   // draw select circle
-  if (mode == 1 and select_menu != 6) {
+  if (mode == 1 and select_menu != 7) {
     display.drawCircle(graph_x[select_ch], graph_y[select_ch], 21, WHITE);
+    display.setTextColor(WHITE);
+    display.setCursor(graph_x[select_ch]-5, graph_y[select_ch]-3);
+    display.print(multiplier[select_ch]);
+    display.setCursor(graph_x[select_ch]+2, graph_y[select_ch]-3);
+    display.print("X");
+
   }
 
   //draw step dot
