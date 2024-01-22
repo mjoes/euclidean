@@ -3,7 +3,17 @@
 #include <Encoder.h>
 #include <Bounce2.h>
 
-
+// Clock divider
+unsigned long pulseTimes[10]; 
+unsigned long pulseDiffs[9]; 
+unsigned long currentPulse = 0; 
+unsigned long oldPulse = 0;
+unsigned long lightPulse = 0;  
+unsigned long pulseTime = 0;
+unsigned long clkPrev = 0;
+unsigned long clkNow = 0;
+int bpmDisp = 0;
+int divPulse = 0;
 //Oled setting
 #include<Wire.h>
 #include<Math.h>
@@ -53,6 +63,7 @@ byte hits[3] = { 4, 4, 5 };//each channel hits
 byte offset[3] = { 0, 2, 0 };//each channele step offset
 bool mute[3] = {0, 0, 0 }; //mute 0 = off , 1 = on
 int limit[3] = {16, 16, 16 };//eache channel max step
+byte multiplier[3] = {1, 1, 1 };
 byte playing_step[3] = {0, 0, 0 };
 
 //rotery encoder
@@ -65,7 +76,6 @@ int newEnc = -999;
 bool trigIn = 0;
 bool oldTrigIn = 0;
 int clock_pulse = 0;
-unsigned long gate_timer = 0;
 unsigned long previousMillis = 0;
 const int numBeats = 5;
 const int beatPins[numBeats] = {pin_clk_4, pin_clk_6, pin_clk_8, pin_clk_12, pin_clk_16};
@@ -75,7 +85,7 @@ unsigned long select_time = 0;
 // Display
 byte select_menu = 0;
 int select_ch = 0;
-int bpm = 0;
+int bpm = 120;
 bool disp_refresh = 1;
 // Drawing the circles
 const int r_circle = 18;
@@ -98,7 +108,9 @@ byte line_ybuf[17];//Buffer for drawing lines
 const float min_bpm = 60;
 const float max_bpm = 150;
 float steps_bpm = (max_bpm - min_bpm) / 1024;
+int pulseCount = 0;
 
+int bufferIndex = 0;
 int mode = 0;
 Bounce debouncer = Bounce();  // Create a Bounce object
 
@@ -135,17 +147,10 @@ void setup() {
   // pinMode(A0, INPUT_PULLUP); 
   debouncer.attach(4);
   debouncer.interval(5); 
+  bpm=120;
 }
 
 void loop() {
-  // int clockValue = digitalRead(12);
-  // if (clockValue == LOW) {
-  //   Serial.println("Cable plugged in");
-  // }
-  // else {
-  //   Serial.println("Cable plugged out");   
-  // }
-
   debouncer.update(); 
   if (debouncer.rose()){
     mode = 1 - mode;
@@ -171,7 +176,7 @@ void loop() {
   newEnc = myEnc.read() / 4;
   optChange = up_down(oldEnc, newEnc);
   oldEnc = newEnc;
-  
+
   if (optChange != 0) {
     select_time = millis(); 
     disp_refresh = 1;
@@ -220,6 +225,10 @@ void loop() {
             limit[select_ch] = 17;
           }
           break;
+
+        case 6: //bpm
+          bpm += optChange;
+          break;
       }
     }
   }
@@ -239,9 +248,6 @@ void loop() {
   }
 
   //-----------------trigger detect & output----------------------
-  // clock_pulse = userBPM();
-  // trigIn = (clock_pulse % 24 == 0 ? 1 : 0);
-  // int bpm = BPM(120);
   int trigExt = digitalRead(12); //external trigger in
   if (trigExt == 1) {
     counter++;
@@ -251,55 +257,101 @@ void loop() {
   
   if (counter > 10) {
     // For testing fix the clockrate
-    int clock_rate = 900; // analogRead(A0);
-    bpm = round(min_bpm + (clock_rate * steps_bpm));
-    trigIn = BPM(bpm); // (clock_pulse % 24 == 0 ? 1 : 0);
+    trigIn = BPM(bpm); 
+    bpmDisp = bpm;
   } else {
     trigIn = trigExt;
-    bpm = 0;
+    bpmDisp = 0;
   }
-
   
   if (oldTrigIn == 0 && trigIn == 1) {
-    gate_timer = millis();
+    currentPulse = millis();
+
+    // CLOCK DIVIDER
+    if (pulseCount < 10) {
+      pulseCount++;
+    }
+    pulseTime = calculateAvg(oldPulse, currentPulse, pulseCount); // currently outputs an int, need to have a float??
+    oldPulse = currentPulse;
+    lightPulse = currentPulse;
+
     for (int i = 0; i <= 2; i++) {
-      playing_step[i]++;      //When the trigger in, increment the step by 1.
-      if (playing_step[i] >= limit[i]) {
-        playing_step[i] = 0;  //When the step limit is reached, the step is set back to 0.
-      }
+      advance_step(i);
     }
-    for (k = 0; k <= 2; k++) {//output gate signal
-      if (offset_buf[k][playing_step[k]] == 1 && mute[k] == 0) {
-        digitalWrite(eucPin[k], HIGH);
-      }
-    }
+    divPulse = 1;
     disp_refresh = 1;
   }
-  if (gate_timer + 10 <= millis()) { //off all gate , gate time is 10msec
+
+  // CLOCK DIVIDER
+  clock_divider(3,0);
+  // int clkInt = pulseTime/3;
+  // if ((millis() - currentPulse >= clkInt*divPulse && divPulse < 3)) {
+  //   lightPulse = millis();
+  //   advance_step(0);
+  //   disp_refresh = 1;
+  //   divPulse++;
+  // }
+
+  if (lightPulse + 10 <= millis()) { //off all gate , gate time is 10msec
     digitalWrite(6, LOW);
     digitalWrite(7, LOW);
     digitalWrite(8, LOW);
   }
 
+
   oldTrigIn = trigIn;
-  
-  // disp_refresh = 1;
-  if (disp_refresh == 1) { // For debugging
-    OLED_display(select_ch, select_menu, mode, bpm);
+
+  if (disp_refresh == 1) {
+    OLED_display(select_ch, select_menu, mode, bpmDisp);
     disp_refresh = 0;
   }
   else {
     delay(3); // Don't know why this is needed but otherwise it hangs (after implementing the input clk switch thing)
   }
+}
 
+// void record_pulse() {
+//   pulseTimes[bufferIndex] = millis();
+//   bufferIndex = (bufferIndex + 1) % 10;  // Circular buffer index update
+// }
+
+void advance_step(int i) {
+  playing_step[i]++;      //When the trigger in, increment the step by 1.
+  if (playing_step[i] >= limit[i]) {
+    playing_step[i] = 0;  //When the step limit is reached, the step is set back to 0.
+  }
+  if (offset_buf[i][playing_step[i]] == 1 && mute[i] == 0) {
+    digitalWrite(eucPin[i], HIGH);
+  }
+}
+
+void clock_divider(int divider, int channel) {
+  int clkInt = pulseTime/divider;
+  if ((millis() - currentPulse >= clkInt*divPulse && divPulse < divider)) {
+    lightPulse = millis();
+    advance_step(channel);
+    disp_refresh = 1;
+    divPulse++;
+  }
+}
+
+float calculateAvg(unsigned long oldPulse, unsigned long currentPulse, int pulseCount) {
+  pulseTimes[bufferIndex] = (currentPulse - oldPulse);
+  bufferIndex = (bufferIndex + 1) % 10;  // Circular buffer index update
+
+  float totalPulse = 0;
+  for (int i = 0; i < pulseCount; i++) {
+    totalPulse += pulseTimes[i]; // Needs logic to tackle average before 10 pulses are reached
+  }
+  return totalPulse/pulseCount;
 }
 
 int get_menu(int change, int select_menu) {
   select_menu = select_menu + change;
   if (select_menu < 0) {
-    select_menu = 5;
+    select_menu = 6;
   }
-  else if (select_menu > 5 ) {
+  else if (select_menu > 6 ) {
     select_menu = 0;
   }
   return select_menu;
@@ -375,8 +427,6 @@ void OLED_display(int select_ch, int select_menu, int mode, int bpm) {
   } else {
     display.print("EXT");
   }
-  
-  
 
   //draw select box
   if ( select_menu == 0) {
@@ -398,7 +448,7 @@ void OLED_display(int select_ch, int select_menu, int mode, int bpm) {
     display.drawRect(97, 51, 11, 13, WHITE);
   }
   // draw select circle
-  if (mode == 1) {
+  if (mode == 1 and select_menu != 6) {
     display.drawCircle(graph_x[select_ch], graph_y[select_ch], 21, WHITE);
   }
 
