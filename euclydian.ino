@@ -3,18 +3,6 @@
 #include <Encoder.h>
 #include <Bounce2.h>
 
-// Clock divider
-unsigned long pulseTimes[10]; 
-unsigned long pulseDiffs[9]; 
-unsigned long currentPulse = 0; 
-unsigned long oldPulse = 0;
-unsigned long lightPulse = 0;  
-unsigned long pulseTime = 0;
-unsigned long clkPrev = 0;
-unsigned long clkNow = 0;
-int bpmDisp = 0;
-byte divPulses[3] = { 1, 1, 1 };
-
 //Oled setting
 #include<Wire.h>
 #include<Math.h>
@@ -26,19 +14,23 @@ byte divPulses[3] = { 1, 1, 1 };
 #define SCREEN_HEIGHT 64
 
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
-int b=0;
-unsigned long counter=0;
-int oldTrigTime = 0;
-bool oldTrigExt = 0;
-// Pins
-int pin_clk_4 = A1;
-int pin_clk_6 = A2;
-int pin_clk_8 = A3;
-int pin_clk_12 = A6;
-int pin_clk_16 = A7;
-int eucPin[3] = {6, 7, 8 };
 
-// Euclydian rhythm
+// Pins
+const byte eucPin[3] = {8, 5, 4 };
+// const int beatPins[3] = {A2, A3, A6};
+
+// Clock divider
+unsigned long pulseTimes[5]; 
+unsigned long pulseDiffs[4]; 
+unsigned long currentPulse = 0; 
+unsigned long oldPulse = 0;
+unsigned long lightPulse = 0;  
+unsigned int pulseTime = 0;
+int bpmDisp = 0;
+int bpm = 120;
+byte divPulses[3] = { 1, 1, 1 };
+
+// Euclydian rhythma
 const static byte euc16[17][16] PROGMEM = {//euclidian rythm
  {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
  {1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
@@ -63,9 +55,11 @@ const static byte euc16[17][16] PROGMEM = {//euclidian rythm
 byte hits[3] = { 4, 4, 5 };//each channel hits
 byte offset[3] = { 0, 2, 0 };//each channele step offset
 bool mute[3] = {0, 0, 0 }; //mute 0 = off , 1 = on
-int limit[3] = {16, 16, 16 };//eache channel max step
+byte limit[3] = {16, 16, 16 };//eache channel max step
 byte multiplier[3] = {1, 1, 1 };
 byte playing_step[3] = {0, 0, 0 };
+byte select_menu = 0;
+byte select_ch = 0;
 
 //rotery encoder
 Encoder myEnc(2, 3);
@@ -76,46 +70,30 @@ int newEnc = -999;
 // General variables
 bool trigIn = 0;
 bool oldTrigIn = 0;
-int clock_pulse = 0;
 unsigned long previousMillis = 0;
-const int numBeats = 5;
-const int beatPins[numBeats] = {pin_clk_4, pin_clk_6, pin_clk_8, pin_clk_12, pin_clk_16};
-const int beatValues[numBeats] = {24, 18, 12, 8, 6};
 unsigned long select_time = 0;
 
 // Display
-byte select_menu = 0;
-int select_ch = 0;
-int bpm = 120;
 bool disp_refresh = 1;
 // Drawing the circles
-const int r_circle = 18;
-const double step_size = 2 * M_PI / 16;
 const byte graph_x[3] = {22, 64, 106 }; // Center point of circles
 const byte graph_y[3] = {24, 24, 24 }; // Center point of circles
 int x16[16];  
 int y16[16]; 
-// Sequence variables
-byte j = 0;
-byte k = 0;
-byte m = 0;
-byte buf_count = 0;
+
 // Drawing the lines
 bool offset_buf[3][16];
 byte line_xbuf[17];//Buffer for drawing lines
 byte line_ybuf[17];//Buffer for drawing lines
 
-// User BPM
-const float min_bpm = 60;
-const float max_bpm = 150;
-float steps_bpm = (max_bpm - min_bpm) / 1024;
+// Trigger
+unsigned long counter=0;
 int pulseCount = 0;
-
 int bufferIndex = 0;
-int mode = 0;
+byte mode = 0;
 Bounce debouncer = Bounce();  // Create a Bounce object
 
-void get_coordinates(int radius) { // Function to get coordinates mathematically
+void get_coordinates(int radius, float step_size) { // Function to get coordinates mathematically
   for (int i = 0; i < 16; ++i) {
     double angle_section = i * step_size;
     x16[i] = radius * cos(angle_section);
@@ -124,31 +102,33 @@ void get_coordinates(int radius) { // Function to get coordinates mathematically
 }
 
 void setup() {
+  const byte r_circle = 18;
+  const float step_size = 2 * M_PI / 16;
   // OLED setting
   display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
   display.setTextSize(1);
   display.setTextColor(WHITE);
   Serial.begin(9600);
-
-  get_coordinates(r_circle);
+  
+  get_coordinates(r_circle, step_size);
   OLED_display(0,0, mode, 120);
 
-  pinMode(pin_clk_4, OUTPUT);
-  pinMode(pin_clk_6, OUTPUT);
-  pinMode(pin_clk_8, OUTPUT);
-  pinMode(pin_clk_12, OUTPUT);
-  pinMode(pin_clk_16, OUTPUT);
-  pinMode(2, INPUT_PULLUP); 
-  pinMode(3, INPUT_PULLUP); 
-  pinMode(4, INPUT_PULLUP); //BUTTON
-  pinMode(6, OUTPUT); 
-  pinMode(7, OUTPUT); 
-  pinMode(8, OUTPUT); 
-  pinMode(12, INPUT_PULLUP); 
-  // pinMode(A0, INPUT_PULLUP); 
-  debouncer.attach(4);
+  // pinMode(A1, OUTPUT); NO SPACE LEFT FOR THESE ON BOARD
+  // pinMode(A2, OUTPUT); NO SPACE LEFT FOR THESE ON BOARD
+  // pinMode(A3, OUTPUT); NO SPACE LEFT FOR THESE ON BOARD
+  // pinMode(A6, OUTPUT); NO SPACE LEFT FOR THESE ON BOARD
+
+  pinMode(2, INPUT_PULLUP); // Rotary encoder 1
+  pinMode(3, INPUT_PULLUP); // Rotary encoder 2 
+  pinMode(9, INPUT_PULLUP); // Rotary encoder switch
+
+  pinMode(4, OUTPUT); // Euclidean CH3
+  pinMode(5, OUTPUT); // Euclidean CH2
+  pinMode(8, OUTPUT); // Euclidean CH1
+  pinMode(7, OUTPUT); // Clock divider
+  pinMode(11, INPUT_PULLUP); // Clock in
+  debouncer.attach(9);
   debouncer.interval(5); 
-  bpm=120;
 }
 
 void loop() {
@@ -166,7 +146,7 @@ void loop() {
         break;
 
       case 5: //reset
-        for (k = 0; k <= 3; k++) {
+        for (byte k = 0; k <= 3; k++) {
           playing_step[k] = 0;
         }
         mode = 0;
@@ -248,7 +228,7 @@ void loop() {
   } 
 
   //-----------------offset setting----------------------
-  for (k = 0; k <= 2; k++) { 
+  for (byte k = 0; k <= 2; k++) { 
     for (int i = offset[k]; i <= 15; i++) {
       offset_buf[k][i - offset[k]] = (pgm_read_byte(&(euc16[hits[k]][i]))) ;
     }
@@ -259,7 +239,8 @@ void loop() {
   }
 
   //-----------------trigger detect & output----------------------
-  int trigExt = digitalRead(12); //external trigger in
+  int trigExt = digitalRead(11); //external trigger in
+
   if (trigExt == 1) {
     counter++;
   } else {
@@ -267,7 +248,6 @@ void loop() {
   }
   
   if (counter > 10) {
-    // For testing fix the clockrate
     trigIn = BPM(bpm); 
     bpmDisp = bpm;
   } else {
@@ -279,34 +259,48 @@ void loop() {
     currentPulse = millis();
 
     // CLOCK DIVIDER
-    if (pulseCount < 10) {
+    if (pulseCount < 5) {
       pulseCount++;
     }
     pulseTime = calculateAvg(oldPulse, currentPulse, pulseCount); // currently outputs an int, need to have a float??
     oldPulse = currentPulse;
-    lightPulse = currentPulse;
-
+    
     for (int i = 0; i <= 2; i++) {
       advance_step(i);
     }
-    // divPulse = 1;
+    // digitalWrite(A1, HIGH);
+    lightPulse = currentPulse;
+
     divPulses[0] = 1;
     divPulses[1] = 1;
     divPulses[2] = 1;
     disp_refresh = 1;
   }
 
-  // CLOCK DIVIDER
   for (int i = 0; i <= 2; i++) { 
-    if (multiplier[i] != 1) {
-      clock_divider(multiplier[i],i);
+    int divider = i + 2;
+    int clkInt = pulseTime/divider;
+    if (clock_divider(clkInt, divider)) {
+      // digitalWrite(beatPins[i+1], HIGH);
+      // lightPulse = millis();
+
+      for (int channel = 0; channel <= 2; channel++) {
+        if (multiplier[channel] == divider){
+          advance_step(channel);
+          disp_refresh = 1;
+        }
+      }
     }
   }
 
   if (lightPulse + 10 <= millis()) { //off all gate , gate time is 10msec
-    digitalWrite(6, LOW);
-    digitalWrite(7, LOW);
-    digitalWrite(8, LOW);
+    // digitalWrite(A1, LOW);
+    // digitalWrite(A2, LOW);
+    // digitalWrite(A3, LOW);
+    // digitalWrite(A6, LOW);
+    digitalWrite(eucPin[0], LOW);
+    digitalWrite(eucPin[1], LOW);
+    digitalWrite(eucPin[2], LOW);
   }
 
   oldTrigIn = trigIn;
@@ -315,34 +309,33 @@ void loop() {
     OLED_display(select_ch, select_menu, mode, bpmDisp);
     disp_refresh = 0;
   }
-  else {
-    delay(3); // Don't know why this is needed but otherwise it hangs (after implementing the input clk switch thing)
-  }
+  // else {
+  //   delay(3); // Don't know why this is needed but otherwise it hangs (after implementing the input clk switch thing)
+  // }
 }
 
 void advance_step(int i) {
-  playing_step[i]++;      //When the trigger in, increment the step by 1.
+  playing_step[i]++; //When the trigger in, increment the step by 1.
   if (playing_step[i] >= limit[i]) {
-    playing_step[i] = 0;  //When the step limit is reached, the step is set back to 0.
+    playing_step[i] = 0; //When the step limit is reached, the step is set back to 0.
   }
   if (offset_buf[i][playing_step[i]] == 1 && mute[i] == 0) {
     digitalWrite(eucPin[i], HIGH);
   }
 }
 
-void clock_divider(int divider, int channel) {
-  int clkInt = pulseTime/divider;
+bool clock_divider(int clkInt, int divider) {
   if ((millis() - currentPulse >= clkInt*divPulses[divider-2] && divPulses[divider-2] < divider)) {
-    lightPulse = millis();
-    advance_step(channel);
-    disp_refresh = 1;
     divPulses[divider-2]++;
+    return true;
+  } else {
+    return false;
   }
 }
 
 float calculateAvg(unsigned long oldPulse, unsigned long currentPulse, int pulseCount) {
   pulseTimes[bufferIndex] = (currentPulse - oldPulse);
-  bufferIndex = (bufferIndex + 1) % 10;  // Circular buffer index update
+  bufferIndex = (bufferIndex + 1) % 5;  // Circular buffer index update
 
   float totalPulse = 0;
   for (int i = 0; i < pulseCount; i++) {
@@ -363,10 +356,10 @@ int get_menu(int change, int select_menu) {
 }
 
 int up_down(int oldOptEnc, int newOptEnc) {
-  if ( (oldOptEnc - newOptEnc) > 0  ) {//turn left
+  if ( (oldOptEnc - newOptEnc) > 0  ) { //turn left
     optChange = -1;
   }
-  else if ( (newOptEnc - oldOptEnc) > 0 ) {//turn right
+  else if ( (newOptEnc - oldOptEnc) > 0 ) { //turn right
     optChange = 1;
   }
   else {
@@ -379,33 +372,10 @@ int BPM(int bpm) {
   float beatInterval = 60000 / (bpm);
   unsigned long currentMillis = millis();
   if ((currentMillis - previousMillis) >= beatInterval) {
-    previousMillis = currentMillis;
+    previousMillis = currentMillis; // previousMillis needs to be global
     return 1;
   } else {
     return 0;
-  }
-}
-
-int userBPM() {
-  // int clock_rate = analogRead(pin_bpm_input);
-  // int bpm = round(min_bpm + (clock_rate * steps_bpm));
-  int bpm = 120;
-  float beatInterval = 60000 / (bpm * 24);
-  unsigned long currentMillis = millis();
-  if ((currentMillis - previousMillis) >= beatInterval) {
-    clock_pulse ++;
-    previousMillis = currentMillis; 
-    writePulse(clock_pulse);
-  }
-  return clock_pulse;
-}
-
-void writePulse(int clock_pulse) {
-  for (int i = 0; i < numBeats; ++i) {
-    digitalWrite(beatPins[i], clock_pulse % beatValues[i] == 0 ? HIGH : LOW); // clock divider
-  }
-  if (clock_pulse == 72) {
-    clock_pulse = 0;
   }
 }
 
@@ -436,26 +406,28 @@ void OLED_display(int select_ch, int select_menu, int mode, int bpm) {
   }
 
   //draw select box
-  if ( select_menu == 0) {
-    display.drawRect(0, 51, 9, 13, WHITE);
-  }
-  else if ( select_menu == 1) {
-    display.drawRect(9, 51, 28, 13, WHITE);
-  }
-  else if ( select_menu == 2) {
-    display.drawRect(37, 51, 24, 13, WHITE);
-  }
-  else if ( select_menu == 3) { // LI 
-    display.drawRect(59, 51, 17, 13, WHITE);
-  }
-  else if ( select_menu == 4) { // M
-    display.drawRect(75, 51, 11, 13, WHITE);
-  }
-  else if ( select_menu == 5) { // R
-    display.drawRect(87, 51, 11, 13, WHITE);
-  }
-  else if ( select_menu == 6) { // X
-    display.drawRect(97, 51, 11, 13, WHITE);
+  switch (select_menu) {
+    case 0: 
+      display.drawRect(0, 51, 9, 13, WHITE);
+      break;
+    case 1: 
+      display.drawRect(9, 51, 28, 13, WHITE);
+      break;
+    case 2: 
+      display.drawRect(37, 51, 23, 13, WHITE);
+      break;
+    case 3: // LI
+      display.drawRect(59, 51, 17, 13, WHITE);
+      break;
+    case 4: // M 
+      display.drawRect(75, 51, 12, 13, WHITE);
+      break;
+    case 5: // R
+      display.drawRect(87, 51, 11, 13, WHITE);
+      break;
+    case 6: // X
+      display.drawRect(97, 51, 11, 13, WHITE);
+      break;
   }
   // draw select circle
   if (mode == 1 and select_menu != 7) {
@@ -465,39 +437,34 @@ void OLED_display(int select_ch, int select_menu, int mode, int bpm) {
     display.print(multiplier[select_ch]);
     display.setCursor(graph_x[select_ch]+2, graph_y[select_ch]-3);
     display.print("X");
-
   }
 
-  //draw step dot
-  for (k = 0; k <= 2; k++) { 
-    for (j = 0; j <= limit[k] - 1; j++) { 
+  for (byte k = 0; k <= 2; k++) { 
+    //draw step dot
+    for (byte j = 0; j <= limit[k] - 1; j++) { 
       display.drawPixel(graph_x[k] + x16[j], graph_y[k] + y16[j], WHITE);
     }
-    buf_count = 0;
-    for (m = 0; m < 16; m++) {
+
+    byte buf_count = 0;
+
+    // Draw single hit line
+    if (hits[k] == 1) {
+      display.drawLine(graph_x[k], graph_y[k], x16[offset[k]] + graph_x[k], y16[offset[k]] + graph_y[k], WHITE);
+    }
+
+    for (byte m = 0; m < 16; m++) {
       if (offset_buf[k][m] == 1) {
         line_xbuf[buf_count] = x16[m] + graph_x[k];//store active step
         line_ybuf[buf_count] = y16[m] + graph_y[k];
         buf_count++;
       }
     }
-    for (j = 0; j < buf_count - 1; j++) {
+    for (byte j = 0; j < buf_count - 1; j++) {
       display.drawLine(line_xbuf[j], line_ybuf[j], line_xbuf[j + 1], line_ybuf[j + 1], WHITE);
     }
-    display.drawLine(line_xbuf[0], line_ybuf[0], line_xbuf[j], line_ybuf[j], WHITE);
-  }
-  for (j = 0; j < 16; j++) {//line_buf reset
-    line_xbuf[j] = 0;
-    line_ybuf[j] = 0;
-  }
-  for (k = 0; k <= 2; k++) { //ch count
-    buf_count = 0;
-    if (hits[k] == 1) {
-      display.drawLine(graph_x[k], graph_y[k], x16[offset[k]] + graph_x[k], y16[offset[k]] + graph_y[k], WHITE);
-    }
-  }
-  //draw play step circle
-  for (k = 0; k <= 2; k++) { //ch count
+    display.drawLine(line_xbuf[0], line_ybuf[0], line_xbuf[buf_count - 1], line_ybuf[buf_count - 1], WHITE); // Could be wrong
+
+    // draw rotating dot
     if (mute[k] == 0) { //mute on = no display circle
       if (offset_buf[k][playing_step[k]] == 0) {
         display.drawCircle(x16[playing_step[k]] + graph_x[k], y16[playing_step[k]] + graph_y[k], 2, WHITE);
@@ -506,6 +473,11 @@ void OLED_display(int select_ch, int select_menu, int mode, int bpm) {
         display.fillCircle(x16[playing_step[k]] + graph_x[k], y16[playing_step[k]] + graph_y[k], 3, WHITE);
       }
     }
+  }
+
+  for (byte j = 0; j < 16; j++) {//line_buf reset
+    line_xbuf[j] = 0;
+    line_ybuf[j] = 0;
   }
   display.display();
 }
