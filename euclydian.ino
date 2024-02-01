@@ -320,6 +320,7 @@ void loop() {
         if (multiplier[channel] == divider){
           advance_step(channel);
           disp_refresh = 1;
+          lightPulse = millis();
         }
       }
     }
