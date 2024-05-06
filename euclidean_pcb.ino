@@ -5,7 +5,6 @@
 
 //Oled setting
 #include<Wire.h>
-#include<Math.h>
 #include<Adafruit_GFX.h>
 #include<Adafruit_SSD1306.h>
 
@@ -19,22 +18,21 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 const byte eucPin[3] = {5, 6, 7 };
 const byte rotPin[2] = {14, 15};
 const byte clkPin = 2;
-const byte divPin = 11;
+const byte divPin = 8;
 
 // Clock divider
-unsigned long pulseTimes[5]; 
-unsigned long pulseDiffs[4]; 
+uint16_t pulseTimes[5]; 
 unsigned long currentPulse = 0; 
 unsigned long oldPulse = 0;
 unsigned long lightPulse = 0;  
-unsigned int pulseTime = 0;
+uint16_t pulseTime = 0;
 
 int bpmDisp = 0;
 int bpm = 120;
 byte divPulses[3] = { 1, 1, 1 };
 
 // Euclydian rhythma
-const static byte euc16[17][16] PROGMEM = {//euclidian rythm
+const static bool euc16[17][16] PROGMEM = {//euclidian rythm
  {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
  {1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
  {1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0},
@@ -67,7 +65,7 @@ byte select_ch = 0;
 
 //rotery encoder
 Encoder myEnc(rotPin[0], rotPin[1]);
-int optChange = 0;
+int8_t optChange = 0;
 int oldEnc  = -999;
 int newEnc = -999;
 
@@ -92,9 +90,10 @@ byte line_ybuf[17];//Buffer for drawing lines
 
 // Trigger
 unsigned long counter=0;
-int pulseCount = 0;
-int bufferIndex = 0;
+uint8_t pulseCount = 0;
+uint8_t bufferIndex = 0;
 byte mode = 0;
+bool clk_source = 0; // 0 is internal, 1 is external
 
 // Buttons
 bool new_reset_state = 0;
@@ -253,15 +252,13 @@ void loop() {
   }
 
   //-----------------trigger detect & output----------------------
-  int trigExt = digitalRead(clkPin); //external trigger in
+  bool trigExt = 1 - digitalRead(clkPin); //external trigger in
 
   if (trigExt == 1) {
-    counter++;
-  } else {
-    counter = 0;
-  }
+    counter = millis();
+  } 
   
-  if (counter > 10) {
+  if (millis() - counter > 1000) {
     trigIn = BPM(bpm); 
     bpmDisp = bpm;
   } else {
@@ -276,7 +273,7 @@ void loop() {
     if (pulseCount < 5) {
       pulseCount++;
     }
-    pulseTime = calculateAvg(oldPulse, currentPulse, pulseCount); // currently outputs an int, need to have a float??
+    pulseTime = calculateAvg(oldPulse, currentPulse, pulseCount); 
     oldPulse = currentPulse;
     
     for (int i = 0; i <= 2; i++) {
@@ -323,9 +320,6 @@ void loop() {
     OLED_display(select_ch, select_menu, mode, bpmDisp, clk_division);
     disp_refresh = 0;
   }
-  // else {
-  //   delay(3); // Don't know why this is needed but otherwise it hangs (after implementing the input clk switch thing)
-  // }
 }
 
 ISR (PCINT1_vect) {
@@ -352,11 +346,11 @@ bool clock_divider(int clkInt, int divider) {
   }
 }
 
-float calculateAvg(unsigned long oldPulse, unsigned long currentPulse, int pulseCount) {
+int calculateAvg(unsigned long oldPulse, unsigned long currentPulse, int pulseCount) {
   pulseTimes[bufferIndex] = (currentPulse - oldPulse);
   bufferIndex = (bufferIndex + 1) % 5;  // Circular buffer index update
 
-  float totalPulse = 0;
+  int totalPulse = 0;
   for (int i = 0; i < pulseCount; i++) {
     totalPulse += pulseTimes[i]; // Needs logic to tackle average before 10 pulses are reached
   }
@@ -399,7 +393,7 @@ int up_down(int oldOptEnc, int newOptEnc) {
 }
 
 int BPM(int bpm) {
-  float beatInterval = 60000 / (bpm);
+  int beatInterval = 60000 / (bpm);
   unsigned long currentMillis = millis();
   if ((currentMillis - previousMillis) >= beatInterval) {
     previousMillis = currentMillis; // previousMillis needs to be global
