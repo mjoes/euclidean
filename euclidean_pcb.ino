@@ -2,6 +2,7 @@
 #define  ENCODER_OPTIMIZE_INTERRUPTS //countermeasure of encoder noise
 #include <Encoder.h>
 #include <Bounce2.h>
+#include <EEPROM.h>
 
 //Oled setting
 #include<Wire.h>
@@ -68,6 +69,9 @@ Encoder myEnc(rotPin[0], rotPin[1]);
 int8_t optChange = 0;
 int oldEnc  = -999;
 int newEnc = -999;
+unsigned long save_time = 0;
+bool save_flag = false;
+bool save_disp = true;
 
 // General variables
 bool trigIn = 0;
@@ -109,7 +113,7 @@ void setup() {
   Serial.begin(115200);
   
   // get_coordinates(r_circle, step_size);
-  OLED_display(0,0, mode, 120, 1);
+  OLED_display(true, 0,0, mode, 120, 1);
 
   pinMode(rotPin[0], INPUT_PULLUP); // Rotary encoder 1
   pinMode(rotPin[1], INPUT_PULLUP); // Rotary encoder 2 
@@ -130,6 +134,17 @@ void setup() {
   debouncer.interval(5); 
   channel_select.attach(10);
   channel_select.interval(5); 
+  
+  // Load from EEPROM
+  int saved = EEPROM.read(0);
+  if (saved == 123) {
+    for (int i = 0; i < 3; i++) {
+      hits[i] = EEPROM.read(i + 1);
+      offset[i] = EEPROM.read(i + 4);
+      limit[i] = EEPROM.read(i + 7);
+      multiplier[i] = EEPROM.read(i + 10);
+    }
+  }
 }
 
 void loop() {
@@ -137,7 +152,18 @@ void loop() {
   channel_select.update();
   new_reset_state = analogRead(A7) * 2 / 1024;
 
-  if (debouncer.rose()){
+  if (debouncer.fell()){
+    save_time = millis();
+    save_flag = true;
+  }
+  if ((millis() - save_time) > 1500 && save_flag == true) {
+    saveSettingsEEPROM(); // PLACEHOLDER
+    save_disp = false;
+    save_flag = false;
+  } 
+
+  if (debouncer.rose() && save_flag == true){
+    save_flag = false;
     disp_refresh = 1;
     if (mode == 2) {
       mode = 0;
@@ -156,6 +182,7 @@ void loop() {
       }
     }
   }
+
   if (channel_select.fell()){
     select_ch += 1;
     if (select_ch > 2) {
@@ -317,8 +344,9 @@ void loop() {
   oldTrigIn = trigIn;
 
   if (disp_refresh == 1) {
-    OLED_display(select_ch, select_menu, mode, bpmDisp, clk_division);
+    OLED_display(save_disp, select_ch, select_menu, mode, bpmDisp, clk_division);
     disp_refresh = 0;
+    save_disp = true;
   }
 }
 
@@ -326,6 +354,16 @@ ISR (PCINT1_vect) {
   newEnc = myEnc.read() / 4;
 }
 
+
+void saveSettingsEEPROM() {
+  for (int i = 0; i < 3; i++) {
+    EEPROM.write(i + 1, hits[i]);
+    EEPROM.write(i + 4, offset[i]);
+    EEPROM.write(i + 7, limit[i]);
+    EEPROM.write(i + 10, multiplier[i]);
+  }
+  EEPROM.write(0, 123); // Indication that data is saved
+}
 
 void advance_step(int i) {
   playing_step[i]++; //When the trigger in, increment the step by 1.
@@ -403,101 +441,103 @@ int BPM(int bpm) {
   }
 }
 
-void OLED_display(int select_ch, int select_menu, int mode, int bpm, int clk_division) {
+void OLED_display(bool save_disp, int select_ch, int select_menu, int mode, int bpm, int clk_division) {
   display.clearDisplay();
-  display.setTextColor(WHITE);
-  if (mode == 2){
-    display.setCursor(23, 15);
-    display.print("Clock division:");
-    display.setCursor(66, 30);
-    display.print(clk_division);
-    display.setCursor(58, 30);
-    display.print("/");
-  } else {
-    display.setCursor(2, 54);
-    display.print("HITS");
-    display.setCursor(30, 54);
-    display.print("OFF");
-    display.setCursor(52, 54);
-    display.print("LI");
-    display.setCursor(67, 54);
-    display.print("MU");
-    display.setCursor(82, 54);
-    display.print("MULT");
-    display.setCursor(110, 54);
-    display.fillRect(109, 51, 19, 13, WHITE);
-    display.setTextColor(BLACK);
-    if (bpm != 0) {
-      display.print(bpm);
+  if (save_disp) {
+    display.setTextColor(WHITE);
+    if (mode == 2){
+      display.setCursor(23, 15);
+      display.print("Clock division:");
+      display.setCursor(66, 30);
+      display.print(clk_division);
+      display.setCursor(58, 30);
+      display.print("/");
     } else {
-      display.print("EXT");
-    }
-
-    //draw select box
-    switch (select_menu) {
-      case 0: // HITS
-        display.drawRect(0, 51, 28, 13, WHITE);
-        break;
-      case 1: // OFFSET
-        display.drawRect(27, 51, 23, 13, WHITE);
-        break;
-      case 2: // LI
-        display.drawRect(50, 51, 15, 13, WHITE);
-        break;
-      case 3: // M 
-        display.drawRect(65, 51, 15, 13, WHITE);
-        break;
-      case 4: // X
-        display.drawRect(80, 51, 28, 13, WHITE);
-        break;
-    }
-    // draw active channel
-    if (mode == 0) {
-      display.fillCircle(graph_x[select_ch], graph_y[select_ch], 2, WHITE);
-    }
-    
-    // draw select circle
-    if (mode == 1 and select_menu != 5) {
-      display.drawCircle(graph_x[select_ch], graph_y[select_ch], 21, WHITE);
-      display.setTextColor(WHITE);
-      display.setCursor(graph_x[select_ch]-5, graph_y[select_ch]-3);
-      display.print(multiplier[select_ch]);
-      display.setCursor(graph_x[select_ch]+2, graph_y[select_ch]-3);
-      display.print("X");
-    }
-
-    for (byte k = 0; k <= 2; k++) { 
-      //draw step dot
-      for (byte j = 0; j <= limit[k] - 1; j++) { 
-        display.drawPixel(graph_x[k] + x16[j], graph_y[k] + y16[j], WHITE);
+      display.setCursor(2, 54);
+      display.print("HITS");
+      display.setCursor(30, 54);
+      display.print("OFF");
+      display.setCursor(52, 54);
+      display.print("LI");
+      display.setCursor(67, 54);
+      display.print("MU");
+      display.setCursor(82, 54);
+      display.print("MULT");
+      display.setCursor(110, 54);
+      display.fillRect(109, 51, 19, 13, WHITE);
+      display.setTextColor(BLACK);
+      if (bpm != 0) {
+        display.print(bpm);
+      } else {
+        display.print("EXT");
       }
 
-      byte buf_count = 0;
-
-      // Draw single hit line
-      if (hits[k] == 1) {
-        display.drawLine(graph_x[k], graph_y[k], x16[offset[k]] + graph_x[k], y16[offset[k]] + graph_y[k], WHITE);
+      //draw select box
+      switch (select_menu) {
+        case 0: // HITS
+          display.drawRect(0, 51, 28, 13, WHITE);
+          break;
+        case 1: // OFFSET
+          display.drawRect(27, 51, 23, 13, WHITE);
+          break;
+        case 2: // LI
+          display.drawRect(50, 51, 15, 13, WHITE);
+          break;
+        case 3: // M 
+          display.drawRect(65, 51, 15, 13, WHITE);
+          break;
+        case 4: // X
+          display.drawRect(80, 51, 28, 13, WHITE);
+          break;
+      }
+      // draw active channel
+      if (mode == 0) {
+        display.fillCircle(graph_x[select_ch], graph_y[select_ch], 2, WHITE);
+      }
+      
+      // draw select circle
+      if (mode == 1 and select_menu != 5) {
+        display.drawCircle(graph_x[select_ch], graph_y[select_ch], 21, WHITE);
+        display.setTextColor(WHITE);
+        display.setCursor(graph_x[select_ch]-5, graph_y[select_ch]-3);
+        display.print(multiplier[select_ch]);
+        display.setCursor(graph_x[select_ch]+2, graph_y[select_ch]-3);
+        display.print("X");
       }
 
-      for (byte m = 0; m < 16; m++) {
-        if (offset_buf[k][m] == 1) {
-          line_xbuf[buf_count] = x16[m] + graph_x[k];//store active step
-          line_ybuf[buf_count] = y16[m] + graph_y[k];
-          buf_count++;
+      for (byte k = 0; k <= 2; k++) { 
+        //draw step dot
+        for (byte j = 0; j <= limit[k] - 1; j++) { 
+          display.drawPixel(graph_x[k] + x16[j], graph_y[k] + y16[j], WHITE);
         }
-      }
-      for (byte j = 0; j < buf_count - 1; j++) {
-        display.drawLine(line_xbuf[j], line_ybuf[j], line_xbuf[j + 1], line_ybuf[j + 1], WHITE);
-      }
-      display.drawLine(line_xbuf[0], line_ybuf[0], line_xbuf[buf_count - 1], line_ybuf[buf_count - 1], WHITE); // Could be wrong
 
-      // draw rotating dot
-      if (mute[k] == 0) { //mute on = no display circle
-        if (offset_buf[k][playing_step[k]] == 0) {
-          display.drawCircle(x16[playing_step[k]] + graph_x[k], y16[playing_step[k]] + graph_y[k], 2, WHITE);
+        byte buf_count = 0;
+
+        // Draw single hit line
+        if (hits[k] == 1) {
+          display.drawLine(graph_x[k], graph_y[k], x16[offset[k]] + graph_x[k], y16[offset[k]] + graph_y[k], WHITE);
         }
-        if (offset_buf[k][playing_step[k]] == 1) {
-          display.fillCircle(x16[playing_step[k]] + graph_x[k], y16[playing_step[k]] + graph_y[k], 3, WHITE);
+
+        for (byte m = 0; m < 16; m++) {
+          if (offset_buf[k][m] == 1) {
+            line_xbuf[buf_count] = x16[m] + graph_x[k];//store active step
+            line_ybuf[buf_count] = y16[m] + graph_y[k];
+            buf_count++;
+          }
+        }
+        for (byte j = 0; j < buf_count - 1; j++) {
+          display.drawLine(line_xbuf[j], line_ybuf[j], line_xbuf[j + 1], line_ybuf[j + 1], WHITE);
+        }
+        display.drawLine(line_xbuf[0], line_ybuf[0], line_xbuf[buf_count - 1], line_ybuf[buf_count - 1], WHITE); // Could be wrong
+
+        // draw rotating dot
+        if (mute[k] == 0) { //mute on = no display circle
+          if (offset_buf[k][playing_step[k]] == 0) {
+            display.drawCircle(x16[playing_step[k]] + graph_x[k], y16[playing_step[k]] + graph_y[k], 2, WHITE);
+          }
+          if (offset_buf[k][playing_step[k]] == 1) {
+            display.fillCircle(x16[playing_step[k]] + graph_x[k], y16[playing_step[k]] + graph_y[k], 3, WHITE);
+          }
         }
       }
     }
